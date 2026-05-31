@@ -1,0 +1,89 @@
+name: Build OpenWrt for NanoPi NEO
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libncurses5-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync unzip wget file python3
+
+      - name: Clone OpenWrt
+        run: |
+          git clone https://git.openwrt.org/openwrt/openwrt.git --branch v25.12.4 --depth 1
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Configure
+        run: |
+          cd openwrt
+          # Увеличить rootfs
+          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=4096" >> .config
+          # Выбрать профиль
+          echo "CONFIG_TARGET_sunxi=y" >> .config
+          echo "CONFIG_TARGET_sunxi_cortexa7=y" >> .config
+          echo "CONFIG_TARGET_sunxi_cortexa7_DEVICE_friendlyarm_nanopi-neo=y" >> .config
+          # Включить оверлей
+          sed -i 's/FEATURES:=.*/& dt-overlay/' target/linux/sunxi/Makefile
+          sed -i '/define Device\/friendlyarm_nanopi-neo/,/endef/ s/^\([ ]*SOC.*\)/\1\n  DEVICE_DTS_OVERLAY := enable-usb2/' target/linux/sunxi/image/cortexa7.mk
+          mkdir -p files
+          cat > files/enable-usb2.dts << 'EOF'
+          /dts-v1/;
+          /plugin/;
+          / {
+              fragment@0 { target = <&ehci2>; __overlay__ { status = "okay"; }; };
+              fragment@1 { target = <&ohci2>; __overlay__ { status = "okay"; }; };
+          };
+          EOF
+          # Добавить пакеты
+          cat >> .config << 'EOC'
+          CONFIG_PACKAGE_nano=y
+          CONFIG_PACKAGE_dtc=y
+          CONFIG_PACKAGE_ttyd=y
+          CONFIG_PACKAGE_mc=y
+          CONFIG_PACKAGE_samba4-server=y
+          CONFIG_PACKAGE_luci-app-samba4=y
+          CONFIG_PACKAGE_docker-ce=y
+          CONFIG_PACKAGE_luci-app-dockerman=y
+          CONFIG_PACKAGE_usbutils=y
+          CONFIG_PACKAGE_kmod-usb-storage=y
+          CONFIG_PACKAGE_kmod-usb-serial=y
+          CONFIG_PACKAGE_kmod-usb-serial-option=y
+          CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+          CONFIG_PACKAGE_uqmi=y
+          CONFIG_PACKAGE_luci-proto-qmi=y
+          CONFIG_PACKAGE_bluez-daemon=y
+          CONFIG_PACKAGE_bluez-utils=y
+          CONFIG_PACKAGE_kmod-bluetooth=y
+          CONFIG_PACKAGE_rtl8xxxu=y
+          CONFIG_PACKAGE_rtl8188eu-firmware=y
+          CONFIG_PACKAGE_rtl8188fu-firmware=y
+          CONFIG_PACKAGE_luci-i18n-base-ru=y
+          CONFIG_PACKAGE_luci-i18n-base-bg=y
+          CONFIG_PACKAGE_luci-i18n-base-de=y
+          CONFIG_PACKAGE_iwinfo=y
+          CONFIG_PACKAGE_tcpdump=y
+          CONFIG_PACKAGE_strace=y
+          CONFIG_PACKAGE_ltrace=y
+          EOC
+          make defconfig
+
+      - name: Build
+        run: |
+          cd openwrt
+          make -j$(nproc)
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-nanopi-neo
+          path: openwrt/bin/targets/sunxi/cortexa7/*.img.gz
